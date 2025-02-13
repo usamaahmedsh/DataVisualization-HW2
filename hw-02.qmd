@@ -1,0 +1,443 @@
+---
+title: "HW 02"
+author: "Usama Ahmed"
+format: 
+  html:
+    embed-resources: true
+    code-fold: true
+toc: true
+---
+
+## 0 - Setup
+
+```{r, include = FALSE}
+#| label: setup
+
+
+if (!require("pacman")) 
+  install.packages("pacman")
+
+# use this line for installing/loading
+pacman::p_load(tidyverse,
+               gridExtra,
+               grid,
+               gtable,
+               ggpubr,
+               ggmap,
+               ggrepel,
+               patchwork,
+               units,
+               data.table,
+               devtools,
+               ggridges,
+               tidytuesdayR,
+               here,
+               dsbox,
+               janitor,
+               ragg,
+               palmerpenguins) 
+
+# Set themes/layouts of html file
+
+ggplot2::theme_set(ggplot2::theme_minimal(base_size = 14))
+
+options(width = 65)
+ 
+knitr::opts_chunk$set(
+  fig.width = 7,
+  fig.asp = 0.618,
+  fig.retina = 3,
+  fig.align = "center",
+  dpi = 300,
+  warning = FALSE,
+  message = FALSE
+)
+
+```
+
+## 1 - A new day, a new plot, a new geom
+
+```{r, fig.asp= 0.8, fig.height=7}
+#| label: geom_density_ridge plot for review scores
+
+data(edibnb)
+
+# Calculate the median scores for neighborhood 
+
+neighborhood_median <- edibnb |>
+  filter(!is.na(neighbourhood)) |>
+  group_by(neighbourhood) |>
+  summarise(median_scores = median(review_scores_rating, na.rm = T)) |>
+  arrange(median_scores)
+
+# Rearrange the neighborhoods based on their median review scores 
+
+edibnb$neighbourhood <- factor(edibnb$neighbourhood, levels = neighborhood_median$neighbourhood)
+
+# Plot
+
+edibnb |> 
+  filter(!is.na(neighbourhood)) |>
+  ggplot(aes(x = review_scores_rating, y = neighbourhood, fill = neighbourhood)) +
+  geom_density_ridges(alpha = 0.8, size = 1, scale = 2) +
+  theme_ridges() +
+  scale_fill_viridis_d() +
+  labs(x = 'Review scores',
+       y = 'Neighborhoods',
+       title = 'Review scores of Edinburgh neighborhoods') +
+  guides(fill = FALSE) 
+  
+
+
+```
+
+We observe the distribution of review scores across Edinburgh neighborhoods. All of the neighborhoods have good reviews with most of the density above 75 review score. The distribution of review scores around 100 decreases as we go from top to bottom. Morningside has highest distribution of scores around 100 whereas Haymarket has the lowest distribution of scores around 100. 
+
+Citations:
+
+geom_density_ridges and theme_ridges functions: https://wilkelab.org/ggridges/
+
+
+## 2 - Foreign Connected PACs
+
+```{r}
+#| label: Funding to parties by foreign connected PACs
+
+# get a list of files with "Foreign Connected PAC" in their names
+
+list_of_files <- list.files(path = "data", pattern = "Foreign Connected PAC")
+
+# read all files and row bind them
+# keeping track of the file name in a new column called year
+
+pac <- read_csv(here("data",list_of_files), id = "year")
+
+# cleaning variable names
+
+pac <- janitor::clean_names(pac)
+
+# fixing the data
+
+pac$year <- gsub('.*?(\\d{4})-(\\d{4})\\.csv', "\\2", pac$year)
+
+splits <- strsplit(pac$country_of_origin_parent_company, "/")
+
+pac$country_of_origin <- sapply(splits, '[', 1)
+pac$parent_company <- sapply(splits, '[', 2)
+
+pac$dems <- as.numeric(sub("\\$","",pac$dems))
+pac$repubs <- as.numeric(sub("\\$","",pac$repubs))
+
+pac <- pac |>
+  select(year,
+         pac_name_affiliate,
+         country_of_origin,
+         parent_company,
+         dems,
+         repubs)
+
+# Convert the data frame in a long format 
+
+pac <- pivot_longer(pac, 
+                    cols = c("dems","repubs"),
+                    names_to = "party",
+                    values_to = "amount")
+
+pac$party <- ifelse(pac$party == "dems", "Democrat","Republican")
+
+# Recreate the first plot
+
+summary_table_uk <- pac |>
+  filter(country_of_origin == 'UK') |>
+  group_by(year,party) |>
+  summarise(total_amount = sum(amount), .groups = "keep") |>
+  mutate(year = as.numeric(year))
+
+
+ggplot(summary_table_uk, aes(x = year,
+                             y = total_amount,
+                             color = party)) +
+  geom_line(size = 1.1) + 
+  scale_x_continuous(breaks = seq(2000,2020, by = 5)) +
+  scale_y_continuous(labels = scales::dollar_format(prefix = "$", suffix = "M", scale = 1e-6)) +
+  theme_minimal() + 
+  theme(legend.position = c(0.9,0.15),
+        axis.title.x = element_text(hjust = 0),
+        axis.title.y = element_text(hjust = 0)) +
+  scale_color_manual(values = c("blue","red")) +
+  labs(x = "Year",
+       y = "Total amount",
+       color = "Party",
+       title = "Contributions to US political partifes from UK-connected PACs",
+       caption = "Source: OpenSecrets.org") 
+
+
+```
+
+Note: I have used regular expressions for data wrangling and matching substring patterns in the first part. Although we have not studied it in class, I am very comfortable with using regular expressions because I have worked with them thoroughly.
+
+### Canada-connected PACs plot
+
+```{r}
+#| label: Canada-connected PAC plot
+
+
+# The second plot
+
+
+summary_table_cad <- pac |>
+  filter(country_of_origin == 'Canada') |>
+  group_by(year,party) |>
+  summarise(total_amount = sum(amount), .groups = "keep") |>
+  mutate(year = as.numeric(year))
+
+
+ggplot(summary_table_cad, aes(x = year,
+                             y = total_amount,
+                             color = party)) +
+  geom_line(size = 1.1) + 
+  scale_x_continuous(breaks = seq(2000,2020, by = 5)) +
+  scale_y_continuous(labels = scales::dollar_format(prefix = "$", suffix = "M", scale = 1e-6)) +
+  theme_minimal() +
+  theme(legend.position = c(0.9,0.15),
+        axis.title.x = element_text(hjust = 0),
+        axis.title.y = element_text(hjust = 0)) +
+  scale_color_manual(values = c("blue","red")) +
+  labs(x = "Year",
+       y = "Total amount",
+       color = "Party",
+       title = "Contributions to US political parties from Canada-connected PACs",
+       caption = "Source: OpenSecrets.org") 
+
+```
+
+Contributions to US political parties from canada-connected PAC's are increasing since 2000. We see a sharp increase in the contributions and they have increased around 4 times since 2000. However, the contributions are very less as compared to UK-connected PACs. 
+
+## 3 - Hop on
+
+```{r}
+#| label: Plane plots
+
+
+# Reading the files
+
+rdu_flights <- read_csv(here("data","rdu-flights-2020.csv"))
+rdu_planes <- read_csv(here("data","rdu-planes-2020.csv"))
+
+# Merging the datasets
+
+rdu_flights_planes <- left_join(rdu_flights,rdu_planes, by = "tailnum") # (33860x27)
+rdu_flights_planes <- subset(rdu_flights_planes,!is.na(rdu_flights_planes$seats))
+
+# Categorizing plane size
+
+rdu_flights_planes <- subset(rdu_flights_planes,!is.na(rdu_flights_planes$seats))
+
+avg_seats <- round(mean(rdu_flights_planes$seats),0)
+sd_seats <- round(sd(rdu_flights_planes$seats),0)
+
+rdu_flights_planes$size <- case_when(rdu_flights_planes$seats <= avg_seats - sd_seats ~ 'Small',
+                                     rdu_flights_planes$seats > avg_seats - sd_seats & 
+                                       rdu_flights_planes$seats <= avg_seats ~ 'Medium',
+                                     rdu_flights_planes$seats > avg_seats & 
+                                       rdu_flights_planes$seats <= avg_seats + sd_seats ~ 'Large',
+                                     rdu_flights_planes$seats > avg_seats + sd_seats ~ 'Jumbo',
+                                     TRUE ~ 'Missing')
+```
+
+- Number of rows x columns: 33860 x 27 (including NAs)
+- Number of rows x columns: 32533 x 27 (excluding NAs)
+
+```{r, dev = "ragg_png"}
+#| label: Recreating the plot
+
+
+# recreating plot
+
+rdu_flights_planes$size <- factor(rdu_flights_planes$size, levels = c("Small","Medium","Large","Jumbo"))
+
+rdu_flights_planes |>
+  group_by(size) |>
+  summarise(total = n()) |>
+  ggplot(aes(x = total, y = size)) +
+  geom_segment(aes(
+    x = 0, xend = total,
+    y = size, yend = size
+  ), color = 'blue') +
+  geom_text(aes(label = "✈️"),
+            size = c(6,8,11,15), 
+            show.legend = FALSE) +
+  labs(x = "Number of flights",
+       y = "Plane size",
+       title = "Number of flights out of RDU in 2020",
+       subtitle = "By size of plane",
+       caption = "Source: FAA Aircraft Registry and\nBureau of Transportation Statistics") + 
+  theme_minimal()
+
+```
+
+For the new variable, I used seats as a proxy for plane size i.e. the more seats in a plane, the bigger the size. I calculated the mean and standard deviation of number of seats in a plane. I then assigned aritrary values (Small, Medium, Large, Jumbo) based on the deviation from the mean. 
+
+- If number of seats are less than 1 deviation from the mean then small
+- If number of seats are between (mean - 1 deviation) and the mean then medium
+- If number of seats are between the mean and (mean + 1 deviation) then large
+- If number of seats are more than (mean + 1 deviation) then Jumbo
+
+
+### New Plot
+```{r, dev = "ragg_png"}
+#| label: New plot for popular flight destinations
+
+# New Plot
+
+setnames(rdu_flights_planes,"year.y","year")
+rdu_flights_planes <- subset(rdu_flights_planes, !is.na(year))
+
+rdu_flights_planes$org_dest <- paste0(rdu_flights_planes$origin, " ✈️ ",rdu_flights_planes$dest)
+
+best_destinations <- rdu_flights_planes |>
+  group_by(org_dest) |>
+  summarise(count = n())
+
+# rdu_flights_planes$org_dest <- factor(rdu_flights_planes$org_dest, 
+#                                       levels = best_destinations$count)
+
+top_destinations <- c("RDU ✈️ ATL",
+                      "RDU ✈️ CLT",
+                      "RDU ✈️ ORD",
+                      "RDU ✈️ BOS",
+                      "RDU ✈️ LGA")
+
+rdu_flights_planes |>
+  filter(org_dest %in% top_destinations) |>
+  group_by(org_dest,size) |>
+  summarise(count = n()) |>
+  ggplot(aes(x = org_dest, y = count, fill = size)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Departure ✈️ Arrival",
+       y = "Number of flights",
+       title = "Most popular flight destinations",
+       subtitle = "By size of the plane",
+       fill = "Size") +
+  theme_minimal()
+
+```
+Small planes are only used for travel in 3 out of top 5 most popular destinations. A medium or a large sized plane is mostly preferred. Jumbo sized planes are not used that often either; the highest occurence is in travelling from RDU to ATL or RDU to CLT
+
+
+## 4 - Expect More. Plot More.
+
+```{r, dev = "ragg_png"}
+#| label: Drawing Target logo
+
+
+logo_circle <- data.frame(x = 1,
+                          y = 1)
+
+
+ggplot(logo_circle, aes(x = x, y = y)) +
+    geom_point(size = 80, 
+             color = "#CC0000") +
+    geom_point(size = 55,
+             color = "white") +
+    geom_point(size = 25,
+             color = "#CC0000") +
+  geom_text(aes(label = "TARGET"),
+            size = 8,
+            color = "#CC0000",
+            vjust = 7.2,
+            hjust = 0.6,
+            fontface = "bold",
+            show.legend = FALSE) +
+  theme(text = element_text(family = "Helvetica")) +
+  geom_text(aes(label = "\u00ae"),
+            size = 4.5,
+            color = "#CC0000",
+            vjust = 13.2,
+            hjust = -2.65,
+            show.legend = FALSE) +
+    theme_void()
+
+```
+
+I mainly used layering for this logo. For the bullseye, I used three geom_points, target red, white, and target red to create the hollow impact. For the text "TARGET", I used geom_text and colored it to Target red with bold text. I repeated the same thing for the trademark. For the positions, I manually adjusted hjust and vjust by hit and trial.
+
+
+
+Citations:
+
+Target Red color code: https://www.onlinepalette.com/target/
+
+Trademark sign: https://www.fileformat.info/info/unicode/char/25ef/index.html
+
+## 5 - Mirror, mirror on the wall, who’s the ugliest of them all?
+
+### Default Plot
+
+```{r}
+#| label: Making the ugliest plot possible
+
+
+data(penguins)
+
+penguins$sex <- case_when(penguins$sex == "male" ~ "Male",
+                          penguins$sex == "female" ~ "Female",
+                          TRUE ~ NA)
+
+# Default plot
+
+penguins |>
+  filter(!is.na(body_mass_g) & !is.na(sex)) |>
+  group_by(species,sex) |>
+  summarise(avg_body_mass = mean(body_mass_g)) |>
+  ggplot(aes(x = species, y = avg_body_mass)) +
+  geom_histogram(stat = "identity") +
+  facet_wrap(~sex,) +
+  labs(x = "Species",
+       y = "Body mass (g)",
+       title = "Average body mass of penguins across species",
+       subtitle = "Categorized by gender") +
+  theme_minimal()
+
+```
+
+### Ugly Plot
+
+```{r}
+#| label: The ugly plot
+
+
+# Ugly plot
+  
+penguins |>
+  filter(!is.na(body_mass_g) & !is.na(sex)) |>
+  group_by(species, sex) |>
+   summarise(avg_body_mass = mean(body_mass_g)) |>
+  ggplot(aes(x = species, y = avg_body_mass)) +
+  geom_histogram(stat = "identity", 
+                 fill = "darkgreen",
+                 color = "black") +
+  facet_wrap(~sex, scales = "free_y") +
+  labs(x = "Species", 
+       y = "Body mass (g)",
+       title = "Average body mass of penguins across species", 
+       subtitle = "Categorized by gender") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10, color = "blue"),
+        axis.title.x = element_text(size = 15, face = "bold", color = "red"),
+        axis.title.y = element_text(size = 15, face = "bold", color = "red"),
+        plot.title = element_text(size = 5, face = "italic", color = "purple"),
+        plot.subtitle = element_text(size = 30, color = "orange"),
+        panel.background = element_rect(fill = "yellow"),
+        strip.background = element_rect(fill = "gray", color = "black"),
+        strip.text = element_text(size = 10, color = "white"),
+        panel.grid.major = element_line(color = "brown", size = 0.5),
+        panel.grid.minor = element_line(color = "pink", size = 0.5),
+        legend.background = element_rect(fill = "cyan"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 12, color = "green"),
+        legend.text = element_text(size = 10, color = "purple"),
+        plot.background = element_rect(fill = "magenta"))
+
+
+```
